@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+# pass in a secret and a path, and we'll print out the xpub/xpriv at that point
+# FIXME: cmdline option for network (hard coded to testnet/signet)
+
+import argparse
+import base58
+import coincurve
+import hashlib
+import hmac
+import re
+import sys
+
+# testnet
+PRV_VERSION = bytes.fromhex('04358394')
+PUB_VERSION = bytes.fromhex('043587CF')
+
+# mainnet
+#PRV_VERSION = bytes.fromhex('0488ADE4')
+#PUB_VERSION = bytes.fromhex('0488B21E')
+
+def master_start(secret_bytes):
+    secret_field = "Bitcoin seed".encode('utf-8')
+    mm = hmac.new(secret_field, secret_bytes, digestmod=hashlib.sha512).digest()
+    return mm[:32], mm[32:]
+
+
+def get_index_bytes(path_str):
+    index = 0
+
+    if path_str == 'm':
+        path_str = '0'
+    elif path_str.endswith('h') or path_str.endswith("'"):
+        index = 2 ** 31
+        path_str = path_str[:-1]
+
+    index += int(path_str)
+    return index.to_bytes(4, 'big')
+
+
+def find_fingerprint(privkey):
+    pubkey = coincurve.PrivateKey(privkey).public_key.format()
+    rip = hashlib.new('ripemd160')
+    rip.update(hashlib.sha256(pubkey).digest())
+    return rip.digest()[:4]
+
+
+def derive_priv_child(privkey, chaincode, path_str):
+    idx_bytes = get_index_bytes(path_str)
+    if int.from_bytes(idx_bytes, 'big') >= 2 ** 31:
+        data = b'\x00' + privkey
+    else:
+        data = coincurve.PrivateKey(privkey).public_key.format()
+    xkey = hmac.new(chaincode, data + idx_bytes, digestmod=hashlib.sha512).digest()
+    child_offset = xkey[:32]
+    child_chaincode = xkey[32:]
+    child_privkey = bytes.fromhex(coincurve.PrivateKey(privkey).add(child_offset).to_hex())
+    return (child_privkey, child_chaincode)
+
+
+def _pub_print(version, depth, fingerprint, data, chaincode, path_str):
+    idx_bytes = get_index_bytes(path_str)
+    info = version +  \
+           depth.to_bytes(1, 'big') + \
+           fingerprint +  \
+           idx_bytes + \
+           chaincode + \
+           data
+    cksum = hashlib.sha256(hashlib.sha256(info).digest()).digest()[:4]
+    return base58.b58encode(info + cksum)
+
+
+def xpub_print(depth, fingerprint, privkey, chaincode, path_str):
+    data = coincurve.PrivateKey(privkey).public_key.format()
+    return _pub_print(PUB_VERSION, depth, fingerprint, data, chaincode, path_str)
+
+def xprv_print(depth, fingerprint, privkey, chaincode, path_str):
+    data = b'\x00' + privkey
+    return _pub_print(PRV_VERSION, depth, fingerprint, data, chaincode, path_str)
+    
+
+def main():
+    args = sys.argv[1:]
+    assert len(args) > 1
+
+    secret = bytes.fromhex(args[0])
+    path = args[1].split('/')
+    
+    # first must be 'm'
+    if path[0] != 'm':
+        sys.stderr.write("Path must start with 'm' {}".format(args[1]))
+        return 1
+
+    # path pattern! 
+    pattern = "^[0-9]+['|h]?$"
+    if any([re.match(pattern, pp) is None for pp in path[1:]]):
+        sys.stderr.write("Path is invalid. {}".format(path))
+        return 1
+
+    depth = 0
+    privkey, chaincode = master_start(secret)
+    master_fgpr = find_fingerprint(privkey)
+    parent_fgpr = b'\x00' * 4
+
+    for pp in path[1:]: 
+        parent_fgpr = find_fingerprint(privkey)
+        privkey, chaincode = derive_priv_child(privkey, chaincode, pp)
+
+    xpub = xpub_print(len(path) - 1, parent_fgpr, privkey, chaincode, path[-1])
+    xprv = xprv_print(len(path) - 1, parent_fgpr, privkey, chaincode, path[-1]) 
+
+    if args[1] == 'm':
+        print('ext-public:', str(xpub, 'utf-8')) 
+        print('ext-prvate:', str(xprv, 'utf-8')) 
+    else:
+        print('ext-public:', '[{}/{}]{}'.format(master_fgpr.hex(), ('/').join(path[1:]), str(xpub, 'utf-8')))
+        print('ext-prvate:', '[{}/{}]{}'.format(master_fgpr.hex(), ('/').join(path[1:]), str(xprv, 'utf-8')))
+    return 0
+        
+
+if __name__ == "__main__":
+    main()
