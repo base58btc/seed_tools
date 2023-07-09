@@ -1,0 +1,6 @@
+asn1crypto==1.5.1
+base58==2.1.1
+cffi==1.15.1
+coincurve==18.0.0
+pycparser==2.21
+ripemd-hash==1.0.0
