@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # pass in a secret and a path, and we'll print out the xpub/xpriv at that point
-# FIXME: cmdline option for network (hard coded to testnet/signet)
 
 import argparse
 import base58
@@ -12,13 +11,16 @@ import sys
 
 from ripemd.ripemd160 import ripemd160
 
-# testnet
-PRV_VERSION = bytes.fromhex('04358394')
-PUB_VERSION = bytes.fromhex('043587CF')
-
-# mainnet
-#PRV_VERSION = bytes.fromhex('0488ADE4')
-#PUB_VERSION = bytes.fromhex('0488B21E')
+KEY_VERSIONS = {
+     'mainnet': {
+        'priv': b'\x04\x88\xAD\xE4',
+        'pub': b'\x04\x88\xB2\x1E'
+     },
+    'testnet': {
+        'priv': b'\x04\x35\x83\x94',
+        'pub': b'\x04\x35\x87\xCF'
+    },
+}
 
 def master_start(secret_bytes):
     secret_field = "Bitcoin seed".encode('utf-8')
@@ -70,31 +72,41 @@ def _pub_print(version, depth, fingerprint, data, chaincode, path_str):
     return base58.b58encode(info + cksum)
 
 
-def xpub_print(depth, fingerprint, privkey, chaincode, path_str):
+def xpub_print(version, depth, fingerprint, privkey, chaincode, path_str):
     data = coincurve.PrivateKey(privkey).public_key.format()
-    return _pub_print(PUB_VERSION, depth, fingerprint, data, chaincode, path_str)
+    return _pub_print(version, depth, fingerprint, data, chaincode, path_str)
 
-def xprv_print(depth, fingerprint, privkey, chaincode, path_str):
+def xprv_print(version, depth, fingerprint, privkey, chaincode, path_str):
     data = b'\x00' + privkey
-    return _pub_print(PRV_VERSION, depth, fingerprint, data, chaincode, path_str)
+    return _pub_print(version, depth, fingerprint, data, chaincode, path_str)
     
 
 def main():
-    args = sys.argv[1:]
-    assert len(args) > 1
+    parser = argparse.ArgumentParser()
+    parser.add_argument("secret")
+    parser.add_argument("derivation_path")
 
-    secret = bytes.fromhex(args[0])
-    path = args[1].split('/')
+    # Default network is 'testnet'j
+    parser.add_argument("-n", "--network", default='testnet')
+
+    args = parser.parse_args()
+
+    secret = bytes.fromhex(args.secret)
+    path = args.derivation_path.split('/')
     
     # first must be 'm'
     if path[0] != 'm':
-        sys.stderr.write("Path must start with 'm' {}".format(args[1]))
+        sys.stderr.write("Path must start with 'm' {}\n".format(args.derivation_path))
+        return 1
+
+    if args.network not in KEY_VERSIONS:
+        sys.stderr.write("Network '{}' not supported, try one of: {}\n".format(args.network, list(KEY_VERSIONS.keys())))
         return 1
 
     # path pattern! 
     pattern = "^[0-9]+['|h]?$"
     if any([re.match(pattern, pp) is None for pp in path[1:]]):
-        sys.stderr.write("Path is invalid. {}".format(path))
+        sys.stderr.write("Path is invalid. {}\n".format(path))
         return 1
 
     depth = 0
@@ -106,10 +118,12 @@ def main():
         parent_fgpr = find_fingerprint(privkey)
         privkey, chaincode = derive_priv_child(privkey, chaincode, pp)
 
-    xpub = xpub_print(len(path) - 1, parent_fgpr, privkey, chaincode, path[-1])
-    xprv = xprv_print(len(path) - 1, parent_fgpr, privkey, chaincode, path[-1]) 
 
-    if args[1] == 'm':
+    vers = KEY_VERSIONS[args.network]
+    xpub = xpub_print(vers['pub'], len(path) - 1, parent_fgpr, privkey, chaincode, path[-1])
+    xprv = xprv_print(vers['priv'], len(path) - 1, parent_fgpr, privkey, chaincode, path[-1])
+
+    if args.derivation_path == 'm':
         print('ext-public:', str(xpub, 'utf-8')) 
         print('ext-prvate:', str(xprv, 'utf-8')) 
     else:
