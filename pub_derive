@@ -10,6 +10,8 @@ import hmac
 import re
 import sys
 
+from ripemd.ripemd160 import ripemd160
+
 # testnet
 PRV_VERSION = bytes.fromhex('04358394')
 PUB_VERSION = bytes.fromhex('043587CF')
@@ -39,9 +41,8 @@ def get_index_bytes(path_str):
 
 def find_fingerprint(privkey):
     pubkey = coincurve.PrivateKey(privkey).public_key.format()
-    rip = hashlib.new('ripemd160')
-    rip.update(hashlib.sha256(pubkey).digest())
-    return rip.digest()[:4]
+    hash160 = ripemd160(hashlib.sha256(pubkey).digest())
+    return hash160[:4]
 
 
 def derive_priv_child(privkey, chaincode, path_str):
