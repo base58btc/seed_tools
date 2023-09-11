@@ -15,41 +15,74 @@ def arr_to_int(arr):
         total += 2 ** i * val
     return total
 
-wordlist = ['']
+def get_exp_entropy(wordlen):
+    if wordlen == 11:
+        return 128, 4
+    if wordlen == 14:
+        return 160, 5
+    if wordlen == 17:
+        return 192, 6
+    if wordlen == 20:
+        return 224, 7
 
-with open ('english.txt') as f:
-    words = f.read().splitlines()
+    assert wordlen == 23
+    return 256, 8
 
-def find_last(wordlist, words):
+
+def build_last_bits(count):
+    last_bits = []
+    for x in range(0, 2 ** count):
+        bits = list(map(int, '{:0b}'.format(x)))
+        while len(bits) < count:
+            bits = [0] + bits
+        assert len(bits) == count
+        last_bits.append(bits)
+
+    return last_bits
+
+
+def get_word(words, bitslist, cslen):
+    g = []
+    for x in range(len(bitslist) // 8):
+        bits = bitslist[x*8:(x+1)*8]
+        g.append(int(''.join([str(x) for x in bits]), 2))
+
+    byte = bytearray(g)
+    chksum = int.from_bytes(sha256(byte).digest()[:1], 'little')
+    cc = bin(chksum)[2:]
+    while len(cc) < 8:
+        cc = '0' + cc
+    # truncate to required checksum bits
+    cc = cc[:cslen]
+    totes = bitslist + [int(c) for c in list(cc)]
+    assert len(totes) % 11 == 0
+
+    last_word_idx = arr_to_int(totes[-11:])
+    return words[last_word_idx]
+
+
+def find_last(wordlist):
+    with open ('english.txt') as f:
+        words = f.read().splitlines()
+
     nums = [words.index(w) for w in wordlist]
 
     bb = []
     for num in nums:
         b = list(map(int, '{:0b}'.format(num)))
-        bb.append((11 -len(b)) * [0])
+        bb.append((11 - len(b)) * [0])
         bb.append(b)
 
     flat = [ item for sublist in bb for item in sublist ]
-    assert len(flat) == 253
+    exp_ent, cs_len = get_exp_entropy(len(nums))
 
-    # randomly append 3 extra bits
-    x = random.randrange(1, 9)
-    flat.append(1 if x & 1 else 0)
-    flat.append(1 if x & 2 else 0)
-    flat.append(1 if x & 4 else 0)
+    # collect missing bits
+    missing_bits = exp_ent - len(flat)
+    last_bits_set = build_last_bits(missing_bits)
 
-    assert len(flat) == 256
+    last_words = []
+    for bitset in last_bits_set:
+        assert len(flat + bitset) == exp_ent
+        last_words.append(get_word(words, flat + bitset, cs_len))
 
-    g = []
-    for x in range(len(flat) // 8):
-        bits = flat[x*8:(x+1)*8]
-        g.append(int(''.join([str(x) for x in bits]), 2))
-
-    byte = bytearray(g)
-    assert len(byte) == 32
-    chksum = int.from_bytes(sha256(byte).digest()[:1], 'little')
-    cc = bin(chksum)[2:]
-    totes = flat + [int(c) for c in list(cc)]
-
-    last_word_idx = arr_to_int(totes[-11:])
-    return words[last_word_idx]
+    return last_words
